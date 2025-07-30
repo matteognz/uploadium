@@ -1,15 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import axios, {
-	AxiosProgressEvent,
-	AxiosRequestConfig,
-	AxiosResponse,
-} from 'axios';
-
-type Labels = Record<string, string>;
-
-type FileWithId = { id: string; file: File };
-
-type UploadStatus = 'idle' | 'uploading' | 'success' | 'error';
+import axios, { AxiosProgressEvent } from 'axios';
+import '../assets/custom.css'
+import { Labels } from 'src/types/label';
+import { FileWithId } from 'src/types/file';
+import { UploadMetrics, UploadStatus } from 'src/types/upload';
+import { generateId, isValidFile } from '../utils/fileUtil';
+import { calculateUploadMetrics } from '../utils/uploadUtil';
 
 export type FileDropzoneProps = {
 	// MAIN PROPS
@@ -60,14 +56,13 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 	const [isDragging, setIsDragging] = useState(false);
 	// Stato con file + id univoco
 	const [filesWithId, setFilesWithId] = useState<FileWithId[]>([]);
-	// Stato progresso caricamento per id
-	const [uploadProgressMap, setUploadProgressMap] = useState<
-		Record<string, number>
-	>({});
-	const [uploadStatuses, setUploadStatuses] = useState<
-		Record<string, UploadStatus>
-	>({});
+	// Stato progresso caricamento per file
+	const [uploadProgressMap, setUploadProgressMap] = useState<Record<string, UploadMetrics>>({});
+	const [uploadStatuses, setUploadStatuses] = useState<Record<string, UploadStatus>>({});
+	
 	const inputRef = useRef<HTMLInputElement>(null);
+	// Inizio upload per calcolare velocità e secondi rimanenti se axios non fornisce rate/estimated
+	const uploadStartAtRef = useRef<Record<string, number>>({});
 
 	useEffect(() => {
     	loadLabels(lang);
@@ -86,28 +81,14 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 		}
   	};
 
-	const isValidFile = (file: File) => {
-		if (accept && !accept.includes(file.type)) return false;
-		if (file.size > maxSizeMb * 1024 * 1024) return false;
-		return true;
-	};
-
-	// Genera un ID univoco (fallback semplice se crypto.randomUUID non supportato)
-	const generateId = (): string => {
-		if ('randomUUID' in crypto) return crypto.randomUUID();
-		return Math.random().toString(36).slice(2) + Date.now().toString(36);
-	};
-
 	const addFiles = (newFiles: File[]) => {
-		let validFiles = newFiles.filter(isValidFile);
-		if (validFiles.length === 0) return;
-
+		let validFiles = newFiles.filter(newFile => isValidFile(newFile, accept, maxSizeMb));
+		if (validFiles?.length === 0) return;
 		// Genera oggetti {id, file}
 		const newFilesWithId = validFiles.map((file) => ({
 			id: generateId(),
 			file,
 		}));
-
 		let updatedFiles: FileWithId[];
 		if (multiple) {
 			updatedFiles = [...filesWithId, ...newFilesWithId];
@@ -117,10 +98,8 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 		} else {
 			updatedFiles = newFilesWithId.slice(0, 1);
 		}
-
 		setFilesWithId(updatedFiles);
 		onFilesDropped(updatedFiles.map(({ file }) => file));
-
 		if (uploadUrl) {
 			if (uploadOneByOne) {
 				newFilesWithId.forEach(({ id, file }) => uploadFile(id, file));
@@ -129,10 +108,18 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 			}
 		}
 	};
+	// helper per aggiornare la mappa con progress/rate/remainingSecs
+	const setMetrics = (id: string, next: UploadMetrics) => {
+		setUploadProgressMap((prev) => ({
+			...prev,
+			[id]: { ...(prev[id] || { progress: 0 }), ...next },
+		}));
+	};
 
 	const uploadFile = async (id: string, file: File) => {
 		try {
 			setUploadStatuses((prev) => ({ ...prev, [id]: 'uploading' }));
+			uploadStartAtRef.current[id] = performance.now();
 
 			const formData = new FormData();
 			formData.append(uploadFieldName, file);
@@ -140,21 +127,16 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 			const config = {
 				headers: { 'Content-Type': 'multipart/form-data' },
 				onUploadProgress: (event: AxiosProgressEvent) => {
+					console.log("AXIOS PROGRESS...", event)
 					const loaded = event.loaded ?? 0;
 					const total = event.total ?? 0;
-					const progress = total
-						? Math.round((loaded * 100) / total)
-						: 0;
-					setUploadProgressMap((prev) => ({
-						...prev,
-						[id]: progress,
-					}));
-					onUploadProgress?.(file, progress);
+					const start = uploadStartAtRef.current[id] ?? performance.now();
+					const uploadMetrics = calculateUploadMetrics(loaded, total, start, event);
+					setMetrics(id, uploadMetrics);
+					onUploadProgress?.(file, uploadMetrics.progress);
 				},
 			};
-
 			const response = await axios.post(uploadUrl!, formData, config);
-
 			setUploadProgressMap((prev) => {
 				const copy = { ...prev };
 				delete copy[id];
@@ -175,6 +157,17 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 
 	const uploadFilesBatch = async (filesBatch: File[]) => {
 		try {
+			setUploadStatuses((prev) => {
+				const next = { ...prev };
+				filesWithId.forEach(({ id, file }) => {
+					if (filesBatch.includes(file)) {
+						next[id] = 'uploading';
+						uploadStartAtRef.current[id] = performance.now();
+					}
+				});
+				return next;
+			});
+
 			const formData = new FormData();
 			filesBatch.forEach((file) =>
 				formData.append(uploadFieldName, file)
@@ -183,30 +176,67 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 			const config = {
 				headers: { 'Content-Type': 'multipart/form-data' },
 				onUploadProgress: (event: AxiosProgressEvent) => {
+					console.log("AXIOS PROGRESS...", event)
 					const loaded = event.loaded ?? 0;
 					const total = event.total ?? 0;
-					const progress = total
-						? Math.round((loaded * 100) / total)
-						: 0;
-					onUploadProgress?.(null as any, progress);
+					const anyId = filesWithId.find(({ file }) => filesBatch.includes(file))?.id;
+					const start = anyId ? uploadStartAtRef.current[anyId] : performance.now();
+					const uploadMetrics = calculateUploadMetrics(loaded, total, start, event);
+					// aggiorna le metriche **per tutti** i file del batch
+					setUploadProgressMap((prev) => {
+						const copy = { ...prev };
+						filesWithId.forEach(({ id, file }) => {
+							const progress = uploadMetrics.progress;
+							const rateKbps = uploadMetrics.rateKbps;
+							const remainingSeconds = uploadMetrics.remainingSeconds;
+							if (filesBatch.includes(file)) {
+								copy[id] = {
+									...(copy[id] || { progress: 0 }),
+									progress,
+									rateKbps,
+									remainingSeconds
+                                };
+							}
+						});
+						return copy;
+					});
+					onUploadProgress?.(null as any, uploadMetrics.progress);
 				},
 			};
-
 			const response = await axios.post(uploadUrl!, formData, config);
-
 			// Imposta tutti i file caricati a "success"
 			setUploadStatuses((prev) => {
 				const copy = { ...prev };
-				filesBatch.forEach((file) => {
-					// Trova id corrispondente per il file (per sicurezza)
-					const fileWithId = filesWithId.find((f) => f.file === file);
-					if (fileWithId) copy[fileWithId.id] = 'success';
+				filesWithId.forEach(({ id, file }) => {
+					if (filesBatch.includes(file)) copy[id] = 'success';
 				});
 				return copy;
 			});
-
+			// pulisci le metriche
+			setUploadProgressMap((prev) => {
+				const copy = { ...prev };
+				filesWithId.forEach(({ id, file }) => {
+					if (filesBatch.includes(file)) delete copy[id];
+				});
+				return copy;
+			});
 			onUploadComplete?.(null as any, response);
 		} catch (error) {
+			// tutti error
+			setUploadStatuses((prev) => {
+				const copy = { ...prev };
+				filesWithId.forEach(({ id, file }) => {
+					if (filesBatch.includes(file)) copy[id] = 'error';
+				});
+				return copy;
+			});
+			setUploadProgressMap((prev) => {
+				const copy = { ...prev };
+				filesWithId.forEach(({ id, file }) => {
+					if (filesBatch.includes(file)) delete copy[id];
+				});
+				return copy;
+			});
 			onUploadError?.(null, error);
 		}
 	};
@@ -253,9 +283,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 
 	return (
 		<div
-			className={
-				Array.isArray(className) ? className.join(' ') : className
-			}
+			className={Array.isArray(className) ? className.join(' ') : className}
 			style={{
 				border: '2px dashed #aaa',
 				borderRadius: 8,
@@ -278,11 +306,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 				accept={accept?.join(',')}
 				multiple={multiple}
 			/>
-			{children || (
-				<p>
-					{label || getLabel('drop_or_click')}
-				</p>
-			)}
+			{children || <p>{label || getLabel('drop_or_click')}</p>}
 
 			{showPreview && filesWithId.length > 0 && (
 				<div
@@ -296,13 +320,13 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 				>
 					{filesWithId.map(({ id, file }) => {
 						const isImage = file.type.startsWith('image/');
-						const url = isImage
-							? URL.createObjectURL(file)
-							: undefined;
-						const progress = uploadProgressMap[id] || 0;
+						const url = isImage ? URL.createObjectURL(file) : undefined;
+						const metrics = uploadProgressMap[id];
+						const progress = metrics?.progress ?? 0;
+						const rateKbps = metrics?.rateKbps;
+						const remainingSeconds = metrics?.remainingSeconds;
 						const status = uploadStatuses[id] || 'idle';
 						const isUploading = status === 'uploading';
-
 						return (
 							<div
 								key={id}
@@ -311,8 +335,8 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 									border: '1px solid #ccc',
 									borderRadius: 4,
 									padding: 8,
-									width: 100,
-									height: 100,
+									width: 120,
+									height: 120,
 									display: 'flex',
 									flexDirection: 'column',
 									alignItems: 'center',
@@ -325,25 +349,16 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 									<img
 										src={url}
 										alt={file.name}
-										style={{
-											maxWidth: '100%',
-											maxHeight: '70px',
-											objectFit: 'contain',
-										}}
+										style={{ maxWidth: '100%', maxHeight: '80px', objectFit: 'contain' }}
 										onLoad={() => URL.revokeObjectURL(url!)}
 									/>
 								) : (
-									<p
-										style={{
-											fontSize: 12,
-											wordBreak: 'break-word',
-										}}
-									>
+									<p style={{ fontSize: 12, wordBreak: 'break-word', textAlign: 'center' }}>
 										{file.name}
 									</p>
 								)}
 
-								{/* Overlay caricamento */}
+								{/* Overlay caricamento con % + velocità + ETA */}
 								{isUploading && (
 									<div
 										style={{
@@ -352,43 +367,38 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 											left: 0,
 											width: '100%',
 											height: '100%',
-											backgroundColor:
-												'rgba(255,255,255,0.7)',
+											backgroundColor: 'rgba(255,255,255,0.75)',
 											display: 'flex',
 											flexDirection: 'column',
 											alignItems: 'center',
 											justifyContent: 'center',
 											fontWeight: 'bold',
-											fontSize: 14,
+											fontSize: 13,
 											color: '#333',
+											padding: 6,
+											textAlign: 'center',
+											gap: 4,
 										}}
 									>
 										<div
-											className="spinner"
 											style={{
 												border: '3px solid #ccc',
 												borderTop: '3px solid #333',
 												borderRadius: '50%',
-												width: 24,
-												height: 24,
-												animation:
-													'spin 1s linear infinite',
-												marginBottom: 6,
+												width: 22,
+												height: 22,
+												animation: 'spin 1s linear infinite',
+												marginBottom: 4,
 											}}
 										/>
-										{progress}%
+										<div>{progress}%</div>
+										{typeof rateKbps === 'number' && <div>{rateKbps} KB/s</div>}
+										{typeof remainingSeconds === 'number' && <div>~{remainingSeconds}s</div>}
 									</div>
 								)}
 
 								{status === 'success' && (
-									<div
-										style={{
-											marginTop: 6,
-											color: 'green',
-											fontWeight: 'bold',
-											fontSize: 12,
-										}}
-									>
+									<div style={{ marginTop: 6, color: 'green', fontWeight: 'bold', fontSize: 12 }}>
 										{getLabel('upload_success')}
 									</div>
 								)}
@@ -419,13 +429,6 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 					})}
 				</div>
 			)}
-
-			<style>{`
-        @keyframes spin {
-          0% { transform: rotate(0deg);}
-          100% { transform: rotate(360deg);}
-        }
-      `}</style>
 		</div>
 	);
 };
