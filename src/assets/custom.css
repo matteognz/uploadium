@@ -1,4 +1,10 @@
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+body {
+  font-family: 'Titillium Web', sans-serif;
+}
+
+.dropzone {
+  transition: background-color 0.3s ease;
+}
+.dropzone:hover {
+  background-color: #f5f5fa;
 }

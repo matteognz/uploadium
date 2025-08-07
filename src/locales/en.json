@@ -1,5 +1,10 @@
 {
   "drop_or_click": "Drop files here or click to select them",
-  "upload_success": "✓ Uploaded successfully!",
-  "remove_file": "Remove file"
+  "upload_success": "Uploaded successfully",
+  "upload_failed": "Upload failed",
+  "remove_file": "Remove file",
+  "validation": {
+    "type_not_allowed": "Unsupported file type: {name}",
+    "size_exceeded": "File too large: {name} - size {size}MB (max expected {maxSize}MB)"
+  }
 }

@@ -1,1 +1,1 @@
-export type Labels = Record<string, string>;
+export type Labels = { [key: string]: string | Record<string, string>; };

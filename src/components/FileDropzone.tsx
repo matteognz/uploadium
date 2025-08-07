@@ -1,16 +1,17 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import axios, { AxiosProgressEvent } from 'axios';
-import '../assets/custom.css'
 import { Labels } from 'src/types/label';
-import { FileWithId } from 'src/types/file';
+import { FileValidationError, FileWithId } from 'src/types/file';
 import { UploadMetrics, UploadStatus } from 'src/types/upload';
-import { generateId, isValidFile } from '../utils/fileUtil';
+import { generateId, validateFile } from '../utils/fileUtil';
 import { calculateUploadMetrics } from '../utils/uploadUtil';
+import { defaultFileIcon, mimeIconMap, statusIcons } from './IconMap';
+import { getLabel } from '../utils/labelUtil';
 
 export type FileDropzoneProps = {
 	// MAIN PROPS
 	onFilesDropped: (files: File[]) => void; // Drop file
-	onError?: (message: string) => void; // Error callback
+	onInvalidFiles?: (errors: FileValidationError[]) => void; // Invalid files
 	accept?: string[]; // MIME types (['image/png', 'application/pdf', ...])
 	multiple?: boolean; // Default TRUE
 	maxFiles?: number; // Default Infinity
@@ -35,6 +36,7 @@ export type FileDropzoneProps = {
 
 export const FileDropzone: React.FC<FileDropzoneProps> = ({
 	onFilesDropped,
+	onInvalidFiles,
 	accept,
 	multiple = true,
 	maxFiles = Infinity,
@@ -68,8 +70,6 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
     	loadLabels(lang);
   	}, [lang]);
 
-	const getLabel = (key: string) => labels[key] || key;
-
 	const loadLabels = async (language: string) => {
 		try {
 			const module = await import(`../locales/${language}.json`);
@@ -82,8 +82,13 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
   	};
 
 	const addFiles = (newFiles: File[]) => {
-		let validFiles = newFiles.filter(newFile => isValidFile(newFile, accept, maxSizeMb));
-		if (validFiles?.length === 0) return;
+		const validationFiles = newFiles.map(file => ({ file, error: validateFile(file, labels, accept, maxSizeMb) }));
+		const validFiles = validationFiles.filter(result => result.error === null).map(result => result.file);
+		const invalidFiles = validationFiles.filter(result => result.error !== null).map(result => result.error!) as FileValidationError[];
+		if (invalidFiles.length > 0) {
+    		onInvalidFiles?.(invalidFiles);
+  		}
+		if (validFiles.length === 0) return;
 		// Genera oggetti {id, file}
 		const newFilesWithId = validFiles.map((file) => ({
 			id: generateId(),
@@ -127,7 +132,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 			const config = {
 				headers: { 'Content-Type': 'multipart/form-data' },
 				onUploadProgress: (event: AxiosProgressEvent) => {
-					console.log("AXIOS PROGRESS...", event)
+					console.info("AXIOS PROGRESS...", event)
 					const loaded = event.loaded ?? 0;
 					const total = event.total ?? 0;
 					const start = uploadStartAtRef.current[id] ?? performance.now();
@@ -176,7 +181,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 			const config = {
 				headers: { 'Content-Type': 'multipart/form-data' },
 				onUploadProgress: (event: AxiosProgressEvent) => {
-					console.log("AXIOS PROGRESS...", event)
+					console.info("AXIOS PROGRESS...", event)
 					const loaded = event.loaded ?? 0;
 					const total = event.total ?? 0;
 					const anyId = filesWithId.find(({ file }) => filesBatch.includes(file))?.id;
@@ -283,16 +288,8 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 
 	return (
 		<div
-			className={Array.isArray(className) ? className.join(' ') : className}
-			style={{
-				border: '2px dashed #aaa',
-				borderRadius: 8,
-				padding: 20,
-				textAlign: 'center',
-				backgroundColor: isDragging ? '#f0f0f0' : undefined,
-				cursor: 'pointer',
-				...style,
-			}}
+			className={`dropzone ${Array.isArray(className) ? className.join(' ') : className} ${isDragging ? 'bg-light' : ''} border border-secondary rounded p-4 text-center`}
+			style={{...style, cursor: 'pointer'}}
 			onDrop={handleDrop}
 			onDragOver={handleDragOver}
 			onDragLeave={handleDragLeave}
@@ -306,18 +303,14 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 				accept={accept?.join(',')}
 				multiple={multiple}
 			/>
-			{children || <p>{label || getLabel('drop_or_click')}</p>}
-
+			{ children || 
+				<div className="d-flex align-items-center justify-content-center gap-2">
+					{statusIcons.upload({ size: 20, className: 'text-primary' })}
+					<p className="m-0">{label || getLabel('drop_or_click', labels)}</p>
+				</div>
+			}
 			{showPreview && filesWithId.length > 0 && (
-				<div
-					style={{
-						marginTop: 16,
-						display: 'flex',
-						gap: 10,
-						flexWrap: 'wrap',
-						justifyContent: 'center',
-					}}
-				>
+				<div className="mt-3 d-flex flex-wrap gap-2 justify-content-center">
 					{filesWithId.map(({ id, file }) => {
 						const isImage = file.type.startsWith('image/');
 						const url = isImage ? URL.createObjectURL(file) : undefined;
@@ -327,69 +320,43 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 						const remainingSeconds = metrics?.remainingSeconds;
 						const status = uploadStatuses[id] || 'idle';
 						const isUploading = status === 'uploading';
+						const IconFile = mimeIconMap[file.type] || defaultFileIcon;
 						return (
 							<div
 								key={id}
+								className="position-relative border rounded p-2 text-center d-flex flex-column align-items-center justify-content-center"
 								style={{
-									position: 'relative',
-									border: '1px solid #ccc',
-									borderRadius: 4,
-									padding: 8,
 									width: 120,
 									height: 120,
-									display: 'flex',
-									flexDirection: 'column',
-									alignItems: 'center',
-									justifyContent: 'center',
 									overflow: 'hidden',
 									userSelect: 'none',
 								}}
 							>
-								{isImage ? (
+								{ isImage ? (
 									<img
 										src={url}
 										alt={file.name}
-										style={{ maxWidth: '100%', maxHeight: '80px', objectFit: 'contain' }}
+										className="img-fluid"
+										style={{ maxHeight: '80px', objectFit: 'contain' }}
 										onLoad={() => URL.revokeObjectURL(url!)}
 									/>
 								) : (
-									<p style={{ fontSize: 12, wordBreak: 'break-word', textAlign: 'center' }}>
-										{file.name}
-									</p>
+									<div>
+										<IconFile size={20} className='text-secondary'/>
+										<span>{file.name}</span>
+									</div>
 								)}
 
 								{/* Overlay caricamento con % + velocità + ETA */}
 								{isUploading && (
 									<div
-										style={{
-											position: 'absolute',
-											top: 0,
-											left: 0,
-											width: '100%',
-											height: '100%',
-											backgroundColor: 'rgba(255,255,255,0.75)',
-											display: 'flex',
-											flexDirection: 'column',
-											alignItems: 'center',
-											justifyContent: 'center',
-											fontWeight: 'bold',
-											fontSize: 13,
-											color: '#333',
-											padding: 6,
-											textAlign: 'center',
-											gap: 4,
-										}}
+										className="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center bg-white bg-opacity-75 fw-bold text-dark text-center p-2 gap-1"
+										style={{ fontSize: 13 }}
 									>
 										<div
-											style={{
-												border: '3px solid #ccc',
-												borderTop: '3px solid #333',
-												borderRadius: '50%',
-												width: 22,
-												height: 22,
-												animation: 'spin 1s linear infinite',
-												marginBottom: 4,
-											}}
+											className="spinner-border spinner-border-sm mb-1"
+											role="status"
+											style={{ width: 22, height: 22 }}
 										/>
 										<div>{progress}%</div>
 										{typeof rateKbps === 'number' && <div>{rateKbps} KB/s</div>}
@@ -398,32 +365,33 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 								)}
 
 								{status === 'success' && (
-									<div style={{ marginTop: 6, color: 'green', fontWeight: 'bold', fontSize: 12 }}>
-										{getLabel('upload_success')}
+									<div className="mt-1 text-success fw-bold d-flex align-items-center gap-1" style={{ fontSize: 12 }}>
+										{statusIcons.success({ size: 18 })}
+										{getLabel('upload_success', labels)}
+									</div>
+								)}
+								{status === 'error' && (
+  									<div className="mt-1 text-danger fw-bold d-flex align-items-center gap-1" style={{ fontSize: 12 }}>
+										{statusIcons.error({ size: 18 })}
+										{getLabel('upload_failed', labels)}
 									</div>
 								)}
 
-								<button
-									onClick={(e) => {
-										e.stopPropagation();
-										removeFile(id);
-									}}
-									style={{
-										position: 'absolute',
-										top: 2,
-										right: 2,
-										background: 'red',
-										color: 'white',
-										border: 'none',
-										borderRadius: '50%',
-										width: 20,
-										height: 20,
-										cursor: 'pointer',
-									}}
-									title={getLabel('remove_file')}
-								>
-									X
-								</button>
+								{ /* Attualmente non implementato l'abort del file che si sta uploadando */}
+								{!isUploading && (
+									<button
+										type="button"
+										className="btn btn-danger btn-sm position-absolute top-0 end-0 rounded-circle d-flex align-items-center justify-content-center"
+										style={{ padding: 3 }}
+										onClick={(e) => {
+											e.stopPropagation();
+											removeFile(id);
+										}}
+										title={getLabel('remove_file', labels)}
+									>
+										{statusIcons.remove({ size: 12 })}
+									</button>
+								)}
 							</div>
 						);
 					})}

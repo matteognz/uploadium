@@ -1,5 +1,10 @@
 {
   "drop_or_click": "Trascina i file qui o clicca per selezionarli",
-  "upload_success": "✓ Caricato con successo!",
-  "remove_file": "Rimuovi file"
+  "upload_success": "Caricato con successo",
+  "upload_failed": "Errore nel caricamento",
+  "remove_file": "Rimuovi file",
+  "validation": {
+    "type_not_allowed": "Tipo file non supportato: {name}",
+    "size_exceeded": "File troppo grande: {name} - dimensioni {size}MB (max atteso {maxSize}MB)"
+  }
 }
