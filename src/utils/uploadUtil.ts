@@ -1,4 +1,5 @@
 import { AxiosProgressEvent } from "axios";
+import { UploadEncoding } from "src/types/upload";
 
 const calculateUploadMetrics = (loaded: number, total: number, start: number, event?: AxiosProgressEvent) => {
 	const progress = total ? Math.round((loaded * 100) / total) : 0;
@@ -15,6 +16,39 @@ const calculateUploadMetrics = (loaded: number, total: number, start: number, ev
 	return { progress, rateKbps, remainingSeconds };
 }
 
+const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
+	const reader = new FileReader();
+	reader.onload = () => resolve(reader.result as string);
+	reader.onerror = reject;
+	reader.readAsDataURL(file);
+});
+
+const uploadEncoder = async (files: File[], encoding: UploadEncoding, fieldName: string) => {
+	if (encoding === 'multipart') {
+		const formData = new FormData();
+		files.forEach(file => formData.append(fieldName, file));
+		return { data: formData, headers: { 'Content-Type': 'multipart/form-data' } };
+	}
+	if (encoding === 'raw') {
+		// GESTIRE IN BATCH PERCHE CARICA SOLO IL PRIMO FILE
+		const file = files[0];
+		return { data: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } };
+	}
+	if (encoding === 'base64') {
+		const base64Files = await Promise.all(
+			files.map(async file => ({
+				name: file.name,
+				type: file.type,
+				size: file.size,
+				content: await fileToBase64(file)
+			}))
+		);
+		return { data: { [fieldName]: base64Files }, headers: { 'Content-Type': 'application/json' } };
+	}
+	throw new Error(`Unsupported encoding: ${encoding}`);
+}
+
 export {
-    calculateUploadMetrics
+    calculateUploadMetrics,
+	uploadEncoder
 }

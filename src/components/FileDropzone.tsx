@@ -2,9 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import axios, { AxiosProgressEvent } from 'axios';
 import { Labels } from 'src/types/label';
 import { FileValidationError, FileWithId } from 'src/types/file';
-import { UploadMetrics, UploadStatus } from 'src/types/upload';
+import { UploadEncoding, UploadMetrics, UploadStatus } from 'src/types/upload';
 import { generateId, validateFile } from '../utils/fileUtil';
-import { calculateUploadMetrics } from '../utils/uploadUtil';
+import { calculateUploadMetrics, uploadEncoder } from '../utils/uploadUtil';
 import { defaultFileIcon, mimeIconMap, statusIcons } from './IconMap';
 import { getLabel } from '../utils/labelUtil';
 
@@ -21,6 +21,7 @@ export type FileDropzoneProps = {
 	uploadUrl?: string; // Backend endpoint to upload files on server/db
 	uploadOneByOne?: boolean; // Default FALSE
 	uploadFieldName?: string; // Name send to backend: Default "file"
+	uploadEncoding?: UploadEncoding; // Encoding method file upload: Default "multipart" 
 	onUploadProgress?: (file: File | null, percent: number) => void; // Progress uploading to backend
 	onUploadComplete?: (file: File | null, response: any) => void; // Callback on upload to backend
 	onUploadError?: (file: File | null, error: any) => void; // Fallback error on upload to backend
@@ -50,6 +51,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 	uploadUrl,
 	uploadOneByOne = false,
 	uploadFieldName = 'file',
+	uploadEncoding = 'multipart',
 	onUploadProgress,
 	onUploadComplete,
 	onUploadError,
@@ -126,11 +128,10 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 			setUploadStatuses((prev) => ({ ...prev, [id]: 'uploading' }));
 			uploadStartAtRef.current[id] = performance.now();
 
-			const formData = new FormData();
-			formData.append(uploadFieldName, file);
+			const { data, headers } = await uploadEncoder([file], uploadEncoding, uploadFieldName);
 
 			const config = {
-				headers: { 'Content-Type': 'multipart/form-data' },
+				headers,
 				onUploadProgress: (event: AxiosProgressEvent) => {
 					console.info("AXIOS PROGRESS...", event)
 					const loaded = event.loaded ?? 0;
@@ -141,7 +142,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 					onUploadProgress?.(file, uploadMetrics.progress);
 				},
 			};
-			const response = await axios.post(uploadUrl!, formData, config);
+			const response = await axios.post(uploadUrl!, data, config);
 			setUploadProgressMap((prev) => {
 				const copy = { ...prev };
 				delete copy[id];
@@ -173,13 +174,10 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 				return next;
 			});
 
-			const formData = new FormData();
-			filesBatch.forEach((file) =>
-				formData.append(uploadFieldName, file)
-			);
+			const { data, headers } = await uploadEncoder(filesBatch, uploadEncoding, uploadFieldName);
 
 			const config = {
-				headers: { 'Content-Type': 'multipart/form-data' },
+				headers,
 				onUploadProgress: (event: AxiosProgressEvent) => {
 					console.info("AXIOS PROGRESS...", event)
 					const loaded = event.loaded ?? 0;
@@ -191,16 +189,8 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 					setUploadProgressMap((prev) => {
 						const copy = { ...prev };
 						filesWithId.forEach(({ id, file }) => {
-							const progress = uploadMetrics.progress;
-							const rateKbps = uploadMetrics.rateKbps;
-							const remainingSeconds = uploadMetrics.remainingSeconds;
 							if (filesBatch.includes(file)) {
-								copy[id] = {
-									...(copy[id] || { progress: 0 }),
-									progress,
-									rateKbps,
-									remainingSeconds
-                                };
+								copy[id] = { ...(copy[id] || { progress: 0 }), ...uploadMetrics };
 							}
 						});
 						return copy;
@@ -208,7 +198,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 					onUploadProgress?.(null as any, uploadMetrics.progress);
 				},
 			};
-			const response = await axios.post(uploadUrl!, formData, config);
+			const response = await axios.post(uploadUrl!, data, config);
 			// Imposta tutti i file caricati a "success"
 			setUploadStatuses((prev) => {
 				const copy = { ...prev };
@@ -347,7 +337,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 									</div>
 								)}
 
-								{/* Overlay caricamento con % + velocità + ETA */}
+								{/* Overlay caricamento con % + velocità + tempo rimanente */}
 								{isUploading && (
 									<div
 										className="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center bg-white bg-opacity-75 fw-bold text-dark text-center p-2 gap-1"
@@ -377,7 +367,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 									</div>
 								)}
 
-								{ /* Attualmente non implementato l'abort del file che si sta uploadando */}
+								{ /* Attualmente non implementato l'abort de* fil* che si st* uploadando */}
 								{!isUploading && (
 									<button
 										type="button"

@@ -49,6 +49,7 @@ const App: React.FC = () => {
             uploadUrl="https://httpbin.org/post" // endpoint demo per test upload
             uploadOneByOne={true}
             uploadFieldName="upload"
+            uploadEncoding="base64"
             onUploadProgress={handleUploadProgress}
             onUploadComplete={handleUploadComplete}
             onUploadError={handleUploadError}

@@ -5,3 +5,5 @@ export type UploadMetrics = {
 	rateKbps?: number;          // KB/s
 	remainingSeconds?: number;  // secondi rimanenti
 };
+
+export type UploadEncoding = 'multipart' | 'base64' | 'raw';
