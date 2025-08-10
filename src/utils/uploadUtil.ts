@@ -23,14 +23,14 @@ const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
 	reader.readAsDataURL(file);
 });
 
+
 const uploadEncoder = async (files: File[], encoding: UploadEncoding, fieldName: string) => {
-	if (encoding === 'multipart') {
+	if (encoding === 'multipart' || (encoding === 'raw' && files.length !== 1)) {
 		const formData = new FormData();
 		files.forEach(file => formData.append(fieldName, file));
 		return { data: formData, headers: { 'Content-Type': 'multipart/form-data' } };
 	}
-	if (encoding === 'raw') {
-		// GESTIRE IN BATCH PERCHE CARICA SOLO IL PRIMO FILE
+	if (encoding === 'raw' && files.length === 1) {
 		const file = files[0];
 		return { data: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } };
 	}
