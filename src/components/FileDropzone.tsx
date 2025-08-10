@@ -21,7 +21,9 @@ export type FileDropzoneProps = {
 	uploadUrl?: string; // Backend endpoint to upload files on server/db
 	uploadOneByOne?: boolean; // Default FALSE
 	uploadFieldName?: string; // Name send to backend: Default "file"
-	uploadEncoding?: UploadEncoding; // Encoding method file upload: Default "multipart" 
+	uploadEncoding?: UploadEncoding; // Encoding method file upload: Default "multipart"
+	uploadChunk?: boolean; // Enable chunk upload: Default FALSE
+	chunkSize?: number; // Size of each chunk: Default 512kB
 	onUploadProgress?: (file: File | null, percent: number) => void; // Progress uploading to backend
 	onUploadComplete?: (file: File | null, response: any) => void; // Callback on upload to backend
 	onUploadError?: (file: File | null, error: any) => void; // Fallback error on upload to backend
@@ -52,6 +54,8 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 	uploadOneByOne = false,
 	uploadFieldName = 'file',
 	uploadEncoding = 'multipart',
+	uploadChunk = false,
+	chunkSize = 512,
 	onUploadProgress,
 	onUploadComplete,
 	onUploadError,
@@ -127,29 +131,62 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 		try {
 			setUploadStatuses((prev) => ({ ...prev, [id]: 'uploading' }));
 			uploadStartAtRef.current[id] = performance.now();
-
-			const { data, headers } = await uploadEncoder([file], uploadEncoding, uploadFieldName);
-
-			const config = {
-				headers,
-				onUploadProgress: (event: AxiosProgressEvent) => {
-					console.info("AXIOS PROGRESS...", event)
-					const loaded = event.loaded ?? 0;
-					const total = event.total ?? 0;
-					const start = uploadStartAtRef.current[id] ?? performance.now();
-					const uploadMetrics = calculateUploadMetrics(loaded, total, start, event);
-					setMetrics(id, uploadMetrics);
-					onUploadProgress?.(file, uploadMetrics.progress);
-				},
-			};
-			const response = await axios.post(uploadUrl!, data, config);
-			setUploadProgressMap((prev) => {
-				const copy = { ...prev };
-				delete copy[id];
-				return copy;
-			});
-			setUploadStatuses((prev) => ({ ...prev, [id]: 'success' }));
-			onUploadComplete?.(file, response);
+			if (uploadChunk && chunkSize && chunkSize > 0) {
+				const chunkSizeByte = chunkSize * 1024;
+				const totalChunks = Math.ceil(file.size / chunkSizeByte);
+				let uploadedBytes = 0;
+				for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+					const start = chunkIndex * chunkSizeByte;
+					const end = Math.min(file.size, start + chunkSizeByte);
+					const chunk = file.slice(start, end);
+					const formData = new FormData();
+					formData.append(uploadFieldName, chunk, file.name);
+					formData.append("fileName", file.name);
+					formData.append("chunkIndex", String(chunkIndex));
+					formData.append("totalChunks", String(totalChunks));
+					formData.append("uploadId", id);
+					await axios.post(uploadUrl!, formData, {
+						onUploadProgress: (event: AxiosProgressEvent) => {
+							const loaded = event.loaded ?? 0;
+							const total = event.total ?? chunk.size;
+							const totalLoaded = uploadedBytes + loaded;
+							const uploadMetrics = calculateUploadMetrics(totalLoaded, file.size, uploadStartAtRef.current[id], event);
+							setMetrics(id, uploadMetrics);
+							onUploadProgress?.(file, uploadMetrics.progress);
+						},
+					});
+					uploadedBytes += chunk.size;
+				}
+				setUploadProgressMap((prev) => {
+					const copy = { ...prev };
+					delete copy[id];
+					return copy;
+				});
+				setUploadStatuses((prev) => ({ ...prev, [id]: 'success' }));
+				onUploadComplete?.(file, { message: "Chunk upload complete" });
+			} else {
+				const { data, headers } = await uploadEncoder([file], uploadEncoding, uploadFieldName);
+				const config = {
+					headers,
+					onUploadProgress: (event: AxiosProgressEvent) => {
+						console.info("AXIOS PROGRESS...", event)
+						const loaded = event.loaded ?? 0;
+						const total = event.total ?? 0;
+						const start = uploadStartAtRef.current[id] ?? performance.now();
+						const uploadMetrics = calculateUploadMetrics(loaded, total, start, event);
+						setMetrics(id, uploadMetrics);
+						onUploadProgress?.(file, uploadMetrics.progress);
+					},
+				};
+				const response = await axios.post(uploadUrl!, data, config);
+				setUploadProgressMap((prev) => {
+					const copy = { ...prev };
+					delete copy[id];
+					return copy;
+				});
+				setUploadStatuses((prev) => ({ ...prev, [id]: 'success' }));
+				onUploadComplete?.(file, response);
+			}
 		} catch (error) {
 			setUploadProgressMap((prev) => {
 				const copy = { ...prev };
@@ -173,9 +210,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 				});
 				return next;
 			});
-
 			const { data, headers } = await uploadEncoder(filesBatch, uploadEncoding, uploadFieldName);
-
 			const config = {
 				headers,
 				onUploadProgress: (event: AxiosProgressEvent) => {
@@ -299,92 +334,88 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 					<p className="m-0">{label || getLabel('drop_or_click', labels)}</p>
 				</div>
 			}
-			{showPreview && filesWithId.length > 0 && (
+			{ showPreview && filesWithId.length > 0 && (
 				<div className="mt-3 d-flex flex-wrap gap-2 justify-content-center">
-					{filesWithId.map(({ id, file }) => {
-						const isImage = file.type.startsWith('image/');
-						const url = isImage ? URL.createObjectURL(file) : undefined;
-						const metrics = uploadProgressMap[id];
-						const progress = metrics?.progress ?? 0;
-						const rateKbps = metrics?.rateKbps;
-						const remainingSeconds = metrics?.remainingSeconds;
-						const status = uploadStatuses[id] || 'idle';
-						const isUploading = status === 'uploading';
-						const IconFile = mimeIconMap[file.type] || defaultFileIcon;
-						return (
-							<div
-								key={id}
-								className="position-relative border rounded p-2 text-center d-flex flex-column align-items-center justify-content-center"
-								style={{
-									width: 120,
-									height: 120,
-									overflow: 'hidden',
-									userSelect: 'none',
-								}}
-							>
-								{ isImage ? (
-									<img
-										src={url}
-										alt={file.name}
-										className="img-fluid"
-										style={{ maxHeight: '80px', objectFit: 'contain' }}
-										onLoad={() => URL.revokeObjectURL(url!)}
-									/>
-								) : (
-									<div>
-										<IconFile size={20} className='text-secondary'/>
-										<span>{file.name}</span>
-									</div>
-								)}
-
-								{/* Overlay caricamento con % + velocità + tempo rimanente */}
-								{isUploading && (
-									<div
-										className="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center bg-white bg-opacity-75 fw-bold text-dark text-center p-2 gap-1"
-										style={{ fontSize: 13 }}
-									>
-										<div
-											className="spinner-border spinner-border-sm mb-1"
-											role="status"
-											style={{ width: 22, height: 22 }}
-										/>
-										<div>{progress}%</div>
-										{typeof rateKbps === 'number' && <div>{rateKbps} KB/s</div>}
-										{typeof remainingSeconds === 'number' && <div>~{remainingSeconds}s</div>}
-									</div>
-								)}
-
-								{status === 'success' && (
-									<div className="mt-1 text-success fw-bold d-flex align-items-center gap-1" style={{ fontSize: 12 }}>
-										{statusIcons.success({ size: 18 })}
-										{getLabel('upload_success', labels)}
-									</div>
-								)}
-								{status === 'error' && (
-  									<div className="mt-1 text-danger fw-bold d-flex align-items-center gap-1" style={{ fontSize: 12 }}>
-										{statusIcons.error({ size: 18 })}
-										{getLabel('upload_failed', labels)}
-									</div>
-								)}
-
-								{ /* Attualmente non implementato l'abort de* fil* che si st* uploadando */}
-								{!isUploading && (
-									<button
-										type="button"
-										className="btn btn-danger btn-sm position-absolute top-0 end-0 rounded-circle d-flex align-items-center justify-content-center"
-										style={{ padding: 3 }}
-										onClick={(e) => {
-											e.stopPropagation();
-											removeFile(id);
-										}}
-										title={getLabel('remove_file', labels)}
-									>
-										{statusIcons.remove({ size: 12 })}
-									</button>
-								)}
+				{ filesWithId.map(({ id, file }) => {
+					const isImage = file.type.startsWith('image/');
+					const url = isImage ? URL.createObjectURL(file) : undefined;
+					const metrics = uploadProgressMap[id];
+					const progress = metrics?.progress ?? 0;
+					const rateKbps = metrics?.rateKbps;
+					const remainingSeconds = metrics?.remainingSeconds;
+					const status = uploadStatuses[id] || 'idle';
+					const isUploading = status === 'uploading';
+					const IconFile = mimeIconMap[file.type] || defaultFileIcon;
+					return (
+						<div
+							key={id}
+							className="position-relative border rounded p-2 text-center d-flex flex-column align-items-center justify-content-center"
+							style={{
+								width: 120,
+								height: 120,
+								overflow: 'hidden',
+								userSelect: 'none',
+							}}
+						>
+						{ isImage ? (
+							<img
+								src={url}
+								alt={file.name}
+								className="img-fluid"
+								style={{ maxHeight: '80px', objectFit: 'contain' }}
+								onLoad={() => URL.revokeObjectURL(url!)}
+							/>
+						) : (
+							<div>
+								<IconFile size={20} className='text-secondary'/>
+								<span>{file.name}</span>
 							</div>
-						);
-					})}
+						)}
+						{isUploading && (
+							<div
+								className="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center bg-white bg-opacity-75 fw-bold text-dark text-center p-2 gap-1"
+								style={{ fontSize: 13 }}
+							>
+								<div
+									className="spinner-border spinner-border-sm mb-1"
+									role="status"
+									style={{ width: 22, height: 22 }}
+								/>
+								<div>{progress}%</div>
+								{typeof rateKbps === 'number' && <div>{rateKbps} KB/s</div>}
+								{typeof remainingSeconds === 'number' && <div>~{remainingSeconds}s</div>}
+							</div>
+						)}
+						{status === 'success' && (
+							<div className="mt-1 text-success fw-bold d-flex align-items-center gap-1" style={{ fontSize: 12 }}>
+								{statusIcons.success({ size: 18 })}
+								{getLabel('upload_success', labels)}
+							</div>
+						)}
+						{status === 'error' && (
+							<div className="mt-1 text-danger fw-bold d-flex align-items-center gap-1" style={{ fontSize: 12 }}>
+								{statusIcons.error({ size: 18 })}
+								{getLabel('upload_failed', labels)}
+							</div>
+						)}
+						{ /* Attualmente non implementato l'abort de* fil* che si st* uploadando */}
+						{!isUploading && (
+							<button
+								type="button"
+								className="btn btn-danger btn-sm position-absolute top-0 end-0 rounded-circle d-flex align-items-center justify-content-center"
+								style={{ padding: 3 }}
+								onClick={(e) => {
+									e.stopPropagation();
+									removeFile(id);
+								}}
+								title={getLabel('remove_file', labels)}
+							>
+								{statusIcons.remove({ size: 12 })}
+							</button>
+						)}
+						</div>
+					);
+				})}
 				</div>
 			)}
 		</div>

@@ -40,7 +40,7 @@ const App: React.FC = () => {
             accept={["image/png", "image/jpeg", "application/pdf"]}
             multiple={true}
             maxFiles={10}
-            maxSizeMb={10}
+            maxSizeMb={100}
             showPreview={true}
             lang="it"
             label="Trascina o seleziona fino a 10 file (png, jpeg, pdf, max 100MB ciascuno)"
@@ -50,6 +50,7 @@ const App: React.FC = () => {
             uploadOneByOne={true}
             uploadFieldName="upload"
             uploadEncoding="base64"
+            uploadChunk={true}
             onUploadProgress={handleUploadProgress}
             onUploadComplete={handleUploadComplete}
             onUploadError={handleUploadError}
