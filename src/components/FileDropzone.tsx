@@ -7,6 +7,7 @@ import { generateId, validateFile } from '../utils/fileUtil';
 import { calculateUploadMetrics, uploadEncoder } from '../utils/uploadUtil';
 import { defaultFileIcon, mimeIconMap, statusIcons } from './IconMap';
 import { getLabel } from '../utils/labelUtil';
+import { prepareChunkRequest } from '../utils/chunkUtil';
 
 export type FileDropzoneProps = {
 	// MAIN PROPS
@@ -139,13 +140,9 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 					const start = chunkIndex * chunkSizeByte;
 					const end = Math.min(file.size, start + chunkSizeByte);
 					const chunk = file.slice(start, end);
-					const formData = new FormData();
-					formData.append(uploadFieldName, chunk, file.name);
-					formData.append("fileName", file.name);
-					formData.append("chunkIndex", String(chunkIndex));
-					formData.append("totalChunks", String(totalChunks));
-					formData.append("uploadId", id);
-					await axios.post(uploadUrl!, formData, {
+					const { body, headers } = await prepareChunkRequest(uploadEncoding, uploadFieldName, file, chunk, chunkIndex, totalChunks, id);
+					await axios.post(uploadUrl!, body, {
+						headers,
 						onUploadProgress: (event: AxiosProgressEvent) => {
 							const loaded = event.loaded ?? 0;
 							const total = event.total ?? chunk.size;
