@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import axios, { AxiosProgressEvent } from 'axios';
 import { Labels } from 'src/types/label';
 import { FileValidationError, FileWithId } from 'src/types/file';
-import { UploadEncoding, UploadMetrics, UploadStatus } from 'src/types/upload';
+import { UploadEncoding, UploadMethod, UploadMetrics, UploadStatus } from 'src/types/upload';
 import { generateId, validateFile } from '../utils/fileUtil';
 import { calculateUploadMetrics, uploadEncoder } from '../utils/uploadUtil';
 import { defaultFileIcon, mimeIconMap, statusIcons } from './IconMap';
@@ -20,6 +20,7 @@ export type FileDropzoneProps = {
 
 	// UPLOAD PROPS
 	uploadUrl?: string; // Backend endpoint to upload files on server/db
+	uploadMethod?: UploadMethod; // Default POST
 	uploadOneByOne?: boolean; // Default FALSE
 	uploadFieldName?: string; // Name send to backend: Default "file"
 	uploadEncoding?: UploadEncoding; // Encoding method file upload: Default "multipart"
@@ -52,6 +53,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 	style,
 	children,
 	uploadUrl,
+	uploadMethod = 'POST',
 	uploadOneByOne = false,
 	uploadFieldName = 'file',
 	uploadEncoding = 'multipart',
@@ -141,7 +143,10 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 					const end = Math.min(file.size, start + chunkSizeByte);
 					const chunk = file.slice(start, end);
 					const { body, headers } = await prepareChunkRequest(uploadEncoding, uploadFieldName, file, chunk, chunkIndex, totalChunks, id);
-					await axios.post(uploadUrl!, body, {
+					await axios.request({
+						url: uploadUrl!,
+						method: uploadMethod?.toLowerCase() || 'post',
+						data: body,
 						headers,
 						onUploadProgress: (event: AxiosProgressEvent) => {
 							const loaded = event.loaded ?? 0;
@@ -163,7 +168,10 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 				onUploadComplete?.(file, { message: "Chunk upload complete" });
 			} else {
 				const { data, headers } = await uploadEncoder([file], uploadEncoding, uploadFieldName);
-				const config = {
+				const response = await axios.request({
+					url: uploadUrl!,
+					method: uploadMethod?.toLowerCase() || 'post',
+					data,
 					headers,
 					onUploadProgress: (event: AxiosProgressEvent) => {
 						console.info("AXIOS PROGRESS...", event)
@@ -174,8 +182,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 						setMetrics(id, uploadMetrics);
 						onUploadProgress?.(file, uploadMetrics.progress);
 					},
-				};
-				const response = await axios.post(uploadUrl!, data, config);
+				});
 				setUploadProgressMap((prev) => {
 					const copy = { ...prev };
 					delete copy[id];
@@ -212,7 +219,10 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 						const end = Math.min(file.size, start + chunkSizeByte);
 						const chunk = file.slice(start, end);
 						const { body, headers } = await prepareChunkRequest(uploadEncoding, uploadFieldName, file, chunk, chunkIndex, totalChunks, id);
-						await axios.post(uploadUrl!, body, {
+						await axios.request({
+							url: uploadUrl!,
+							method: uploadMethod?.toLowerCase() || 'post',
+							data: body,
 							headers,
 							onUploadProgress: (event: AxiosProgressEvent) => {
 								const loaded = event.loaded ?? 0;
@@ -221,13 +231,16 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 								const uploadMetrics = calculateUploadMetrics(totalLoaded, file.size, uploadStartAtRef.current[id], event);
 								setMetrics(id, uploadMetrics);
 								onUploadProgress?.(file, uploadMetrics.progress);
-							},
+							}
 						});
 						uploadedBytes += chunk.size;
 					}
 				} else {
 					const { data, headers } = await uploadEncoder([file], uploadEncoding, uploadFieldName);
-					await axios.post(uploadUrl!, data, {
+					await axios.request({
+						url: uploadUrl!, 
+						method: uploadMethod?.toLowerCase() || 'post',
+						data,
 						headers,
 						onUploadProgress: (event: AxiosProgressEvent) => {
 							const loaded = event.loaded ?? 0;
