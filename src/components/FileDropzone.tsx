@@ -197,74 +197,72 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 
 	const uploadFilesBatch = async (filesBatch: File[]) => {
 		try {
-			setUploadStatuses((prev) => {
-				const next = { ...prev };
-				filesWithId.forEach(({ id, file }) => {
-					if (filesBatch.includes(file)) {
-						next[id] = 'uploading';
-						uploadStartAtRef.current[id] = performance.now();
-					}
-				});
-				return next;
-			});
-			const { data, headers } = await uploadEncoder(filesBatch, uploadEncoding, uploadFieldName);
-			const config = {
-				headers,
-				onUploadProgress: (event: AxiosProgressEvent) => {
-					console.info("AXIOS PROGRESS...", event)
-					const loaded = event.loaded ?? 0;
-					const total = event.total ?? 0;
-					const anyId = filesWithId.find(({ file }) => filesBatch.includes(file))?.id;
-					const start = anyId ? uploadStartAtRef.current[anyId] : performance.now();
-					const uploadMetrics = calculateUploadMetrics(loaded, total, start, event);
-					// aggiorna le metriche **per tutti** i file del batch
-					setUploadProgressMap((prev) => {
-						const copy = { ...prev };
-						filesWithId.forEach(({ id, file }) => {
-							if (filesBatch.includes(file)) {
-								copy[id] = { ...(copy[id] || { progress: 0 }), ...uploadMetrics };
-							}
+			for (const file of filesBatch) {
+				const fileObj = filesWithId.find(f => f.file === file);
+				if (!fileObj) continue;
+				const { id } = fileObj;
+				setUploadStatuses(prev => ({ ...prev, [id]: 'uploading' }));
+				uploadStartAtRef.current[id] = performance.now();
+				if (uploadChunk && chunkSize && chunkSize > 0) {
+					const chunkSizeByte = chunkSize * 1024;
+					const totalChunks = Math.ceil(file.size / chunkSizeByte);
+					let uploadedBytes = 0;
+					for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+						const start = chunkIndex * chunkSizeByte;
+						const end = Math.min(file.size, start + chunkSizeByte);
+						const chunk = file.slice(start, end);
+						const { body, headers } = await prepareChunkRequest(uploadEncoding, uploadFieldName, file, chunk, chunkIndex, totalChunks, id);
+						await axios.post(uploadUrl!, body, {
+							headers,
+							onUploadProgress: (event: AxiosProgressEvent) => {
+								const loaded = event.loaded ?? 0;
+								const total = event.total ?? chunk.size;
+								const totalLoaded = uploadedBytes + loaded;
+								const uploadMetrics = calculateUploadMetrics(totalLoaded, file.size, uploadStartAtRef.current[id], event);
+								setMetrics(id, uploadMetrics);
+								onUploadProgress?.(file, uploadMetrics.progress);
+							},
 						});
+						uploadedBytes += chunk.size;
+					}
+				} else {
+					const { data, headers } = await uploadEncoder([file], uploadEncoding, uploadFieldName);
+					await axios.post(uploadUrl!, data, {
+						headers,
+						onUploadProgress: (event: AxiosProgressEvent) => {
+							const loaded = event.loaded ?? 0;
+							const total = event.total ?? 0;
+							const start = uploadStartAtRef.current[id];
+							const uploadMetrics = calculateUploadMetrics(loaded, total, start, event);
+							setMetrics(id, uploadMetrics);
+							onUploadProgress?.(file, uploadMetrics.progress);
+						},
+					});
+				}
+				setUploadProgressMap(prev => {
+					const copy = { ...prev };
+					delete copy[id];
+					return copy;
+				});
+				setUploadStatuses(prev => ({ ...prev, [id]: 'success' }));
+				onUploadComplete?.(file, { message: 'Upload complete' });
+			}
+		} catch (error) {
+			// In caso di errore per un file, segna solo quel file come errore
+			console.error(error);
+			const failedFile = filesBatch.find(f => filesWithId.some(({ file }) => file === f));
+			if (failedFile) {
+				const failedId = filesWithId.find(({ file }) => file === failedFile)?.id;
+				if (failedId) {
+					setUploadProgressMap(prev => {
+						const copy = { ...prev };
+						delete copy[failedId];
 						return copy;
 					});
-					onUploadProgress?.(null as any, uploadMetrics.progress);
-				},
-			};
-			const response = await axios.post(uploadUrl!, data, config);
-			// Imposta tutti i file caricati a "success"
-			setUploadStatuses((prev) => {
-				const copy = { ...prev };
-				filesWithId.forEach(({ id, file }) => {
-					if (filesBatch.includes(file)) copy[id] = 'success';
-				});
-				return copy;
-			});
-			// pulisci le metriche
-			setUploadProgressMap((prev) => {
-				const copy = { ...prev };
-				filesWithId.forEach(({ id, file }) => {
-					if (filesBatch.includes(file)) delete copy[id];
-				});
-				return copy;
-			});
-			onUploadComplete?.(null as any, response);
-		} catch (error) {
-			// tutti error
-			setUploadStatuses((prev) => {
-				const copy = { ...prev };
-				filesWithId.forEach(({ id, file }) => {
-					if (filesBatch.includes(file)) copy[id] = 'error';
-				});
-				return copy;
-			});
-			setUploadProgressMap((prev) => {
-				const copy = { ...prev };
-				filesWithId.forEach(({ id, file }) => {
-					if (filesBatch.includes(file)) delete copy[id];
-				});
-				return copy;
-			});
-			onUploadError?.(null, error);
+					setUploadStatuses(prev => ({ ...prev, [failedId]: 'error' }));
+					onUploadError?.(failedFile, error);
+				}
+			}
 		}
 	};
 

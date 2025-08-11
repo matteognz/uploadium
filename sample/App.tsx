@@ -51,6 +51,7 @@ const App: React.FC = () => {
             uploadFieldName="upload"
             uploadEncoding="base64"
             uploadChunk={true}
+            chunkSize={16}
             onUploadProgress={handleUploadProgress}
             onUploadComplete={handleUploadComplete}
             onUploadError={handleUploadError}
