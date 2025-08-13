@@ -17,6 +17,8 @@ export type FileDropzoneProps = {
 	multiple?: boolean; // Default TRUE
 	maxFiles?: number; // Default Infinity
 	maxSizeMb?: number; // Default Infinity
+	axiosInstance?: typeof axios; // Axios instance configured in main project
+  	authHeaders?: Record<string, string>; // Auth headers manually configured in main project
 
 	// UPLOAD PROPS
 	uploadUrl?: string; // Backend endpoint to upload files on server/db
@@ -41,18 +43,16 @@ export type FileDropzoneProps = {
 };
 
 export const FileDropzone: React.FC<FileDropzoneProps> = ({
+	// MAIN
 	onFilesDropped,
 	onInvalidFiles,
 	accept,
 	multiple = true,
 	maxFiles = Infinity,
 	maxSizeMb = Infinity,
-	lang = "it",
-	showPreview = true,
-	label,
-	className,
-	style,
-	children,
+	axiosInstance,
+    authHeaders,
+	// UPLOAD
 	uploadUrl,
 	uploadMethod = 'POST',
 	uploadOneByOne = false,
@@ -64,7 +64,15 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 	onUploadProgress,
 	onUploadComplete,
 	onUploadError,
+	// VIEW-STYLE
+	lang = "it",
+	showPreview = true,
+	label,
+	className,
+	style,
+	children,
 }) => {
+	const client = axiosInstance || axios;
 	const [labels, setLabels] = useState<Labels>({});
 	const [isDragging, setIsDragging] = useState(false);
 	// Stato con file + id univoco
@@ -145,7 +153,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 					const end = Math.min(file.size, start + chunkSizeByte);
 					const chunk = file.slice(start, end);
 					const { body, headers } = await prepareChunkRequest(uploadEncoding, uploadFieldName, file, chunk, chunkIndex, totalChunks, id);
-					await axios.request({
+					await client.request({
 						url: uploadUrl!,
 						method: uploadMethod?.toLowerCase() || 'post',
 						data: body,
@@ -170,7 +178,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 				onUploadComplete?.(file, { message: "Chunk upload complete" });
 			} else {
 				const { data, headers } = await uploadEncoder([file], uploadEncoding, uploadFieldName);
-				const response = await axios.request({
+				const response = await client.request({
 					url: uploadUrl!,
 					method: uploadMethod?.toLowerCase() || 'post',
 					data,
@@ -221,7 +229,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 						const end = Math.min(file.size, start + chunkSizeByte);
 						const chunk = file.slice(start, end);
 						const { body, headers } = await prepareChunkRequest(uploadEncoding, uploadFieldName, file, chunk, chunkIndex, totalChunks, id);
-						await axios.request({
+						await client.request({
 							url: uploadUrl!,
 							method: uploadMethod?.toLowerCase() || 'post',
 							data: body,
@@ -239,7 +247,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 					}
 				} else {
 					const { data, headers } = await uploadEncoder([file], uploadEncoding, uploadFieldName);
-					await axios.request({
+					await client.request({
 						url: uploadUrl!, 
 						method: uploadMethod?.toLowerCase() || 'post',
 						data,
