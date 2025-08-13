@@ -57,6 +57,14 @@ const prepareChunkRequest = async (
     return { body, headers };
 }
 
+const shouldFileChunk = (uploadChunk: boolean, chunkSize: number, chunkThresholdMB: number, fileSize: number): boolean => {
+    let shouldChunk = false; 
+    if(uploadChunk && chunkSize && chunkSize > 0 && (!chunkThresholdMB || fileSize > chunkThresholdMB * 1024 * 1024))
+        shouldChunk = true;
+    return shouldChunk;
+}
+
 export {
-    prepareChunkRequest
+    prepareChunkRequest,
+    shouldFileChunk
 }

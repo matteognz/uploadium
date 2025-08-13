@@ -7,7 +7,7 @@ import { generateId, validateFile } from '../utils/fileUtil';
 import { calculateUploadMetrics, uploadEncoder } from '../utils/uploadUtil';
 import { defaultFileIcon, mimeIconMap, statusIcons } from './IconMap';
 import { getLabel } from '../utils/labelUtil';
-import { prepareChunkRequest } from '../utils/chunkUtil';
+import { prepareChunkRequest, shouldFileChunk } from '../utils/chunkUtil';
 
 export type FileDropzoneProps = {
 	// MAIN PROPS
@@ -26,6 +26,7 @@ export type FileDropzoneProps = {
 	uploadEncoding?: UploadEncoding; // Encoding method file upload: Default "multipart"
 	uploadChunk?: boolean; // Enable chunk upload: Default FALSE
 	chunkSize?: number; // Size of each chunk: Default 512kB
+	chunkThresholdMB?: number // Chunk file only if it's larger than X MB: Default 16MB  
 	onUploadProgress?: (file: File | null, percent: number) => void; // Progress uploading to backend
 	onUploadComplete?: (file: File | null, response: any) => void; // Callback on upload to backend
 	onUploadError?: (file: File | null, error: any) => void; // Fallback error on upload to backend
@@ -58,7 +59,8 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 	uploadFieldName = 'file',
 	uploadEncoding = 'multipart',
 	uploadChunk = false,
-	chunkSize = 512,
+	chunkSize = 512, //KB
+	chunkThresholdMB = 16,
 	onUploadProgress,
 	onUploadComplete,
 	onUploadError,
@@ -134,7 +136,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 		try {
 			setUploadStatuses((prev) => ({ ...prev, [id]: 'uploading' }));
 			uploadStartAtRef.current[id] = performance.now();
-			if (uploadChunk && chunkSize && chunkSize > 0) {
+			if (shouldFileChunk(uploadChunk, chunkSize, chunkThresholdMB, file.size)) {
 				const chunkSizeByte = chunkSize * 1024;
 				const totalChunks = Math.ceil(file.size / chunkSizeByte);
 				let uploadedBytes = 0;
@@ -210,7 +212,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 				const { id } = fileObj;
 				setUploadStatuses(prev => ({ ...prev, [id]: 'uploading' }));
 				uploadStartAtRef.current[id] = performance.now();
-				if (uploadChunk && chunkSize && chunkSize > 0) {
+				if (shouldFileChunk(uploadChunk, chunkSize, chunkThresholdMB, file.size)) {
 					const chunkSizeByte = chunkSize * 1024;
 					const totalChunks = Math.ceil(file.size / chunkSizeByte);
 					let uploadedBytes = 0;
